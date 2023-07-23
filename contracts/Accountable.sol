@@ -5,17 +5,15 @@ pragma solidity ^0.8.20;
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 
-import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
-
 import {Counters} from "@openzeppelin/contracts/utils/Counters.sol";
-import {OracleLib} from "./libraries/OracleLib.sol";
+import {OracleLib, AggregatorV3Interface} from "./libraries/OracleLib.sol";
 
 contract Accountable is Ownable, AccessControl {
     using Counters for Counters.Counter;
 
     Counters.Counter public taskId;
 
-    using OracleLib for uint256;
+    using OracleLib for AggregatorV3Interface;
 
     /**
      * Errors
@@ -26,9 +24,12 @@ contract Accountable is Ownable, AccessControl {
     error Accountable__AlreadyJoined();
     // error Accountable__NotAParticipant();
     error Accountable__CantRemoveYourself();
+    error Accountable__NeedsMoreThanZero();
+    error Accountable__TokenNotAllowed(address);
 
     error Accountable_MaximumLimitReached(uint256);
     error Accountable__StatusIsNotDeactivate(Status);
+    error Accountable__TokenAddressesAndPriceFeedAddressesAmountsDontMatch();
 
     /**
      * Interfaces
@@ -60,6 +61,9 @@ contract Accountable is Ownable, AccessControl {
     uint256 private s_participationStake;
     address payable[] private s_participants;
     mapping(address => uint256) private s_participantBalance;
+    mapping(uint256 tokenId => string tokenUri) private s_tokenIdToUri;
+    mapping(address token => address priceFeed) private s_priceFeeds;
+    address private s_currentChainPriceFeed;
 
     // Tasks
     mapping(uint256 => Task) s_tasks;
@@ -86,9 +90,26 @@ contract Accountable is Ownable, AccessControl {
     event AccountableContractCreated(address, uint256, uint256);
     event TaskCreated(uint256 indexed);
 
-    /**
-     * modifiers
-     */
+    ///////////////////
+    // Modifiers
+    ///////////////////
+    modifier moreThanZero(uint256 amount) {
+        if (amount == 0) {
+            revert Accountable__NeedsMoreThanZero();
+        }
+        _;
+    }
+
+    modifier isAllowedToken(address token) {
+        if (s_priceFeeds[token] == address(0)) {
+            revert Accountable__TokenNotAllowed(token);
+        }
+        _;
+    }
+
+    ///////////////////
+    // Functions
+    ///////////////////
 
     /**
      * Constructor called only once during contract deployment
@@ -96,7 +117,26 @@ contract Accountable is Ownable, AccessControl {
      * @param _numberOfParticipatingParties: Total Number of participating parties/roommates in the contract
      * @param _participationStake: Amount need to be staked by each participant to join the agreement
      */
-    constructor(string memory _title, uint256 _numberOfParticipatingParties, uint256 _participationStake) {
+    constructor(
+        string memory _title,
+        uint256 _numberOfParticipatingParties,
+        uint256 _participationStake,
+        address[] memory _tokenAddresses,
+        address[] memory _priceFeedAddresses,
+        address _priceFeedAddressOfcurrentChain
+    ) {
+        if (_tokenAddresses.length != _priceFeedAddresses.length) {
+            revert Accountable__TokenAddressesAndPriceFeedAddressesAmountsDontMatch();
+        }
+
+        // These feeds will be the USD pairs
+        // For example wETH / USD or wBTC / USD or MATIC / USD or USDC / USD etc.,
+        for (uint256 i = 0; i < _tokenAddresses.length; i++) {
+            s_priceFeeds[_tokenAddresses[i]] = _priceFeedAddresses[i];
+        }
+
+        s_currentChainPriceFeed = _priceFeedAddressOfcurrentChain;
+
         s_title = _title;
         s_numberOfParticipatingParties = _numberOfParticipatingParties;
         s_participationStake = _participationStake;
@@ -124,7 +164,47 @@ contract Accountable is Ownable, AccessControl {
             revert Accountable__AlreadyJoined();
         }
 
-        if (msg.value < s_participationStake) {
+        AggregatorV3Interface priceFeed = AggregatorV3Interface(s_currentChainPriceFeed);
+
+        // a check to see if correct amount of funds are sent to mint an NFT
+        if (priceFeed.getUsdValue(msg.value) < s_participationStake) {
+            revert Accountable__NotEnoughEthSent();
+        }
+
+        emit ParticipantJoinedAgreement(msg.sender, msg.value);
+
+        s_participants.push(payable(msg.sender));
+        s_participantBalance[msg.sender] = msg.value;
+        _grantRole(PARTICIPANT_ROLE, msg.sender);
+
+        if (s_participants.length == s_numberOfParticipatingParties) {
+            emit AgreementActive(block.number, block.timestamp);
+            s_status = Status.ACTIVE;
+        }
+    }
+
+    /**
+     * Participant can join the agreement by staking required ETH
+     */
+    function joinAgreementWithTokens(address _tokenAddress, uint256 _amount) external payable {
+        // 1. revert if person already joined or maximum persons joined
+        // 2. check to ensure enough stake is sent to join the agreement
+        // 3. Add the partcipant to contract on succesful check and emit an event for logging
+        // 4. make a note of participant's balance
+        // 5. If Number of Participants is equal to Number of People joined the agreement, Contract becomes ACTIVE
+
+        if (s_numberOfParticipatingParties == s_participants.length) {
+            revert Accountable_MaximumLimitReached(s_numberOfParticipatingParties);
+        }
+
+        if (hasRole(PARTICIPANT_ROLE, msg.sender)) {
+            revert Accountable__AlreadyJoined();
+        }
+
+        AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[_tokenAddress]);
+
+        // a check to see if correct amount of funds are sent to mint an NFT
+        if (priceFeed.getUsdValue(_amount) < s_participationStake) {
             revert Accountable__NotEnoughEthSent();
         }
 
@@ -152,6 +232,16 @@ contract Accountable is Ownable, AccessControl {
         } else {
             revert Accountable__NoEthSentToIncreaseStake();
         }
+    }
+
+    /**
+     * a function called by owner of contract to add support of buying NFT in other tokens
+     *
+     * @param _tokenAddress: address of token contract
+     * @param _tokenPriceFeedAddress: pricefeed address of token address being addded
+     */
+    function addTokenSupport(address _tokenAddress, address _tokenPriceFeedAddress) external onlyOwner {
+        s_priceFeeds[_tokenAddress] = _tokenPriceFeedAddress;
     }
 
     function addTask(string memory taskName, uint256 numOfPeople, uint256 repetitionPerWeek)
@@ -334,5 +424,39 @@ contract Accountable is Ownable, AccessControl {
 
     function getBalance(address account) external view returns (uint256) {
         return s_participantBalance[account];
+    }
+
+    /**
+     * a function call to return current chain price feed address
+     */
+    function getNativeChainPriceFeed() external view returns (address) {
+        return s_currentChainPriceFeed;
+    }
+
+    /**
+     * a function called to get price feed address of a token
+     *
+     * @param _token: token for which price feed address is needed
+     */
+    function getTokenPriceFeed(address _token) external view returns (address) {
+        return s_priceFeeds[_token];
+    }
+
+    /**
+     * a function called to get usd price in eth
+     */
+    function getEthPriceFromUsd() external view returns (uint256) {
+        AggregatorV3Interface priceFeed = AggregatorV3Interface(s_currentChainPriceFeed);
+        return priceFeed.getEthAmountFromUsd(s_participationStake);
+    }
+
+    /**
+     * a function to get price conversion from USD to token equivalent price
+     *
+     * @param _tokenAddress: conversion in which token equivalent is needed
+     */
+    function getTokenPriceFromUsd(address _tokenAddress) external view returns (uint256) {
+        AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[_tokenAddress]);
+        return priceFeed.getEthAmountFromUsd(s_participationStake);
     }
 }

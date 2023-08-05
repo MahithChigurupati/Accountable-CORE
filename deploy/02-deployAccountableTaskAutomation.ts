@@ -4,7 +4,7 @@ import { DeployFunction } from "hardhat-deploy/types"
 import verify from "../utils/verify"
 import { networkConfig, developmentChains } from "../helper-hardhat-config"
 
-const deployAccountableFactory: DeployFunction = async function (
+const deployAccountableTaskAutomation: DeployFunction = async function (
     hre: HardhatRuntimeEnvironment
 ) {
     // @ts-ignore
@@ -19,6 +19,10 @@ const deployAccountableFactory: DeployFunction = async function (
     let wethTokenAddress: string
     let wbtcTokenAddress: string
     let usdcTokenAddress: string
+    let cronUpKeepFactory: string
+    let keeperRegistry: string
+    let keeperRegistrar: string
+    let linkTokenAddress: string
 
     if (chainId == 31337 || chainId == 1337) {
         const ethUsdAggregator = await deployments.get("MockV3Aggregator")
@@ -38,6 +42,13 @@ const deployAccountableFactory: DeployFunction = async function (
 
         const usdc = await deployments.get("MockUsdcToken")
         usdcTokenAddress = usdc.address
+
+        const link = await deployments.get("MockLinkToken")
+        linkTokenAddress = link.address
+
+        keeperRegistry = networkConfig[chainId].keeperRegistry!
+        keeperRegistrar = networkConfig[chainId].keeperRegistrar!
+        cronUpKeepFactory = networkConfig[chainId].cronUpKeepFactory!
     } else {
         ethUsdPriceFeedAddress = networkConfig[chainId].wethUsdPriceFeed!
         btcUsdPriceFeedAddress = networkConfig[chainId].wbtcUsdPriceFeed!
@@ -46,35 +57,45 @@ const deployAccountableFactory: DeployFunction = async function (
         wethTokenAddress = networkConfig[chainId].weth!
         wbtcTokenAddress = networkConfig[chainId].wbtc!
         usdcTokenAddress = networkConfig[chainId].usdc!
+
+        keeperRegistry = networkConfig[chainId].keeperRegistry!
+        keeperRegistrar = networkConfig[chainId].keeperRegistrar!
+        linkTokenAddress = networkConfig[chainId].linkToken!
+        cronUpKeepFactory = networkConfig[chainId].cronUpKeepFactory!
     }
 
     log("----------------------------------------------------")
-    log("Deploying Accountable Factory and waiting for confirmations...")
+    log(
+        "Deploying Accountable Task Automation and waiting for confirmations..."
+    )
 
-    const tokens = [wethTokenAddress, wbtcTokenAddress, usdcTokenAddress]
-    const priceFeeds = [
-        ethUsdPriceFeedAddress,
-        btcUsdPriceFeedAddress,
-        usdcUsdPriceFeedAddress,
+    const args = [
+        cronUpKeepFactory,
+        keeperRegistry,
+        keeperRegistrar,
+        linkTokenAddress,
     ]
 
-    const args = [tokens, priceFeeds, wethTokenAddress]
+    const accountableTaskAutomation = await deploy(
+        "AccountableTaskAutomation",
+        {
+            from: deployer,
+            args: args,
+            log: true,
+            waitConfirmations: networkConfig[chainId].blockConfirmations || 0,
+        }
+    )
 
-    const accountableFactory = await deploy("AccountableFactory", {
-        from: deployer,
-        args: args,
-        log: true,
-        waitConfirmations: networkConfig[chainId].blockConfirmations || 0,
-    })
-
-    log(`accountableFactory deployed at ${accountableFactory.address}`)
+    log(
+        `accountableTaskAutomation deployed at ${accountableTaskAutomation.address}`
+    )
 
     if (
         !developmentChains.includes(network.name) &&
         process.env.ETHERSCAN_API_KEY
     ) {
-        await verify(accountableFactory.address, args)
+        await verify(accountableTaskAutomation.address, args)
     }
 }
-export default deployAccountableFactory
-deployAccountableFactory.tags = ["all", "accountableFactory"]
+export default deployAccountableTaskAutomation
+deployAccountableTaskAutomation.tags = ["all", "accountableTaskAutomation"]

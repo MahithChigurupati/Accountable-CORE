@@ -45,6 +45,13 @@ const deployMocks: DeployFunction = async function (
             args: ["USD Coin", "USDC"],
         })
 
+        await deploy("MockLinkToken", {
+            contract: "MockLinkToken",
+            from: deployer,
+            log: true,
+            args: ["Link Token", "LINK"],
+        })
+
         log("Mocks Deployed!")
         log("----------------------------------")
         log(

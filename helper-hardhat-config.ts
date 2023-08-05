@@ -9,6 +9,10 @@ export interface networkConfigItem {
     wbtcUsdPriceFeed?: string
     maticUsdPriceFeed?: string
     usdcUsdPriceFeed?: string
+    linkToken?: string
+    keeperRegistry?: string
+    keeperRegistrar?: string
+    cronUpKeepFactory?: string
     blockConfirmations?: number
 }
 
@@ -20,10 +24,22 @@ export const networkConfig: networkConfigInfo = {
     1337: {
         name: "hardhat",
         blockConfirmations: 0,
+
+        //delete later
+        linkToken: "0xdd13E55209Fd76AfE204dBda4007C227904f0a81",
+        keeperRegistry: "0x694AA1769357215DE4FAC081bf1f309aDC325306",
+        keeperRegistrar: "0x694AA1769357215DE4FAC081bf1f309aDC325306",
+        cronUpKeepFactory: "0x694AA1769357215DE4FAC081bf1f309aDC325306",
     },
     31337: {
         name: "localhost",
         blockConfirmations: 0,
+
+        //delete later
+        linkToken: "0x694AA1769357215DE4FAC081bf1f309aDC325306",
+        keeperRegistry: "0xdd13E55209Fd76AfE204dBda4007C227904f0a81",
+        keeperRegistrar: "0x694AA1769357215DE4FAC081bf1f309aDC325306",
+        cronUpKeepFactory: "0x694AA1769357215DE4FAC081bf1f309aDC325306",
     },
     11155111: {
         name: "sepolia",
@@ -35,6 +51,13 @@ export const networkConfig: networkConfigInfo = {
         wethUsdPriceFeed: "0x694AA1769357215DE4FAC081bf1f309aDC325306",
         wbtcUsdPriceFeed: "0x1b44F3514812d835EB1BDB0acB33d3fA3351Ee43",
         usdcUsdPriceFeed: "0xA2F78ab2355fe2f984D808B5CeE7FD0A93D5270E",
+
+        //change these with real values later
+        linkToken: "0x694AA1769357215DE4FAC081bf1f309aDC325306",
+        keeperRegistry: "0x694AA1769357215DE4FAC081bf1f309aDC325306",
+        keeperRegistrar: "0x694AA1769357215DE4FAC081bf1f309aDC325306",
+        cronUpKeepFactory: "0x694AA1769357215DE4FAC081bf1f309aDC325306",
+
         blockConfirmations: 6,
     },
     80001: {
@@ -84,6 +107,8 @@ export const testnetChains = ["mumbai", "sepolia"]
 export const frontEndContractsFile =
     "../ACCOUNTABLE-UI/constants/contractAddresses.json"
 export const frontEndAbiFile = "../ACCOUNTABLE-UI/constants/abi.json"
+export const frontEndExternalContractAddressesFile =
+    "../ACCOUNTABLE-UI/constants/externalContractsAddresses.json"
 
 export const DECIMALS = "18"
 export const AGGREGATOR_INITIAL_PRICE = ethers.parseEther("2000")

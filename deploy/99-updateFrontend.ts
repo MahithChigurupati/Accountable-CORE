@@ -1,6 +1,8 @@
 import {
     frontEndContractsFile,
     frontEndAbiFile,
+    frontEndExternalContractAddressesFile,
+    networkConfig,
 } from "../helper-hardhat-config"
 import fs from "fs"
 import { DeployFunction } from "hardhat-deploy/types"
@@ -42,6 +44,35 @@ const updateUI: DeployFunction = async function (
         fs.writeFileSync(
             frontEndAbiFile,
             JSON.stringify(accountableFactory.interface.fragments)
+        )
+
+        const externalContracts = JSON.parse(
+            fs.readFileSync(frontEndExternalContractAddressesFile, "utf8")
+        )
+        if (chainId in externalContracts) {
+            if (
+                !externalContracts[network.config.chainId!].includes(
+                    accountableFactory.target
+                )
+            ) {
+                externalContracts[network.config.chainId!].push(
+                    accountableFactory.target
+                )
+            }
+        } else {
+            externalContracts[network.config.chainId!] = {
+                linkToken: networkConfig[network.config.chainId!].linkToken!,
+                keeperRegistrar:
+                    networkConfig[network.config.chainId!].keeperRegistrar!,
+                keeperRegistry:
+                    networkConfig[network.config.chainId!].keeperRegistry!,
+                cronUpKeepFactory:
+                    networkConfig[network.config.chainId!].cronUpKeepFactory!,
+            }
+        }
+        fs.writeFileSync(
+            frontEndExternalContractAddressesFile,
+            JSON.stringify(externalContracts)
         )
         console.log("Front end written!")
     }

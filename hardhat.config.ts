@@ -37,11 +37,17 @@ const config: HardhatUserConfig = {
                 version: "0.6.6",
             },
         ],
+        settings: {
+            optimizer: {
+                enabled: true,
+            },
+        },
     },
 
     networks: {
         hardhat: {
             chainId: 1337,
+            allowUnlimitedContractSize: true,
         },
         localhost: {
             url: "http://localhost:8545",

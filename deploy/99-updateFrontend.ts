@@ -14,24 +14,24 @@ const updateUI: DeployFunction = async function (
 
     if (process.env.UPDATE_FRONT_END) {
         console.log("Writing to front end...")
-        const accountable = await ethers.getContractFactory("Accountable")
+        const accountable = await ethers.getContractFactory(
+            "AccountableFactory"
+        )
         const contractAddresses = JSON.parse(
             fs.readFileSync(frontEndContractsFile, "utf8")
         )
         if (chainId in contractAddresses) {
             if (
-                !contractAddresses[network.config.chainId!]
-                    .includes
-                    // avatarNftMe.address
-                    ()
+                !contractAddresses[network.config.chainId!].includes(
+                    accountable.target
+                )
             ) {
-                contractAddresses[network.config.chainId!]
-                    .push
-                    // avatarNftMe.target
-                    ()
+                contractAddresses[network.config.chainId!].push(
+                    accountable.target
+                )
             }
         } else {
-            // contractAddresses[network.config.chainId!] = [avatarNftMe.target]
+            contractAddresses[network.config.chainId!] = [accountable.target]
         }
         fs.writeFileSync(
             frontEndContractsFile,

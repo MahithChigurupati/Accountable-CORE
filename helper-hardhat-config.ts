@@ -82,8 +82,8 @@ export const developmentChains = ["hardhat", "localhost"]
 export const testnetChains = ["mumbai", "sepolia"]
 
 export const frontEndContractsFile =
-    "../ANME-UI/constants/contractAddresses.json"
-export const frontEndAbiFile = "../ANME-UI/constants/abi.json"
+    "../ACCOUNTABLE-UI/constants/contractAddresses.json"
+export const frontEndAbiFile = "../ACCOUNTABLE-UI/constants/abi.json"
 
 export const DECIMALS = "18"
 export const AGGREGATOR_INITIAL_PRICE = ethers.parseEther("2000")

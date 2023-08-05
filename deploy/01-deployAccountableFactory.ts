@@ -4,7 +4,7 @@ import { DeployFunction } from "hardhat-deploy/types"
 import verify from "../utils/verify"
 import { networkConfig, developmentChains } from "../helper-hardhat-config"
 
-const deployAvatarNftMe: DeployFunction = async function (
+const deployAccountableFactory: DeployFunction = async function (
     hre: HardhatRuntimeEnvironment
 ) {
     // @ts-ignore
@@ -58,21 +58,23 @@ const deployAvatarNftMe: DeployFunction = async function (
         usdcUsdPriceFeedAddress,
     ]
 
-    // const nftAvatarMe = await deploy("AvatarNftMe", {
-    //     from: deployer,
-    //     args: args,
-    //     log: true,
-    //     waitConfirmations: networkConfig[chainId].blockConfirmations || 0,
-    // })
+    const args = [tokens, priceFeeds, wethTokenAddress]
 
-    // log(`nftAvatarMe deployed at ${nftAvatarMe.address}`)
+    const accountableFactory = await deploy("AccountableFactory", {
+        from: deployer,
+        args: args,
+        log: true,
+        waitConfirmations: networkConfig[chainId].blockConfirmations || 0,
+    })
+
+    log(`accountableFactory deployed at ${accountableFactory.address}`)
 
     if (
         !developmentChains.includes(network.name) &&
         process.env.ETHERSCAN_API_KEY
     ) {
-        // await verify(nftAvatarMe.address, args)
+        await verify(accountableFactory.address, args)
     }
 }
-export default deployAvatarNftMe
-deployAvatarNftMe.tags = ["all", "avatarNftMe"]
+export default deployAccountableFactory
+deployAccountableFactory.tags = ["all", "accountableFactory"]

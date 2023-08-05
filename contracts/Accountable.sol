@@ -16,9 +16,13 @@ import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {Counters} from "@openzeppelin/contracts/utils/Counters.sol";
 import {OracleLib, AggregatorV3Interface} from "./libraries/OracleLib.sol";
 
+import {AccountableFactory} from "./AccountableFactory.sol";
+import {AccountableTaskAutomation} from "./AccountableTaskAutomation.sol";
+
 //////////////////////
 // errors
 //////////////////////
+error Accountable__NotActive();
 error Accountable__RefundFailed();
 error Accountable__AlreadyJoined();
 error Accountable__TransferFailed();
@@ -26,16 +30,15 @@ error Accountable__NotAParticipant();
 error Accountable__NotEnoughEthSent();
 error Accountable__NeedsMoreThanZero();
 error Accountable__CantRemoveYourself();
+error Accountable__EncodeCronJobFailed();
 error Accountable__AlreadyInDeactivation();
-error Accountable__NotActive();
 error Accountable__StatusIsNotDeactivate();
 error Accountable__TokenNotAllowed(address);
 error Accountable__NoEthSentToIncreaseStake();
 error Accountable_MaximumLimitReached(uint256);
-error Accountable__PriceFeedAddressesCantBeZero();
 error Accountable__NumberOfParticipantsMustBeMoreThanOne();
-error Accountable__CountOfTokenAddressesAndPriceFeedAddressesDontMatch();
-
+error Accountable__MultipleAssetsNotAllowed();
+error Accountable__CanOnlyApproveDeactivationOnce();
 /**
  * @title An Accountability application contract
  * @author Mahith Chigurupati
@@ -62,6 +65,7 @@ error Accountable__CountOfTokenAddressesAndPriceFeedAddressesDontMatch();
  * @dev This contract implements chainlink price feeds for price conversions
  *      This contract also implements chainlink Automation(keepers) for timely execution
  */
+
 contract Accountable is Ownable, AccessControl {
     //////////////////////
     // Type Declarations
@@ -92,6 +96,7 @@ contract Accountable is Ownable, AccessControl {
     struct Task {
         string tastName;
         uint256 numberOfParticipants;
+        uint256 nextParticipantIndex;
         uint256 repetitionPerWeek;
         uint256 accepted;
         address[] assignedTo;
@@ -105,8 +110,10 @@ contract Accountable is Ownable, AccessControl {
     uint256 private s_participationStake;
     address payable[] private s_participants;
     uint256 private s_deactivationApprovals;
-    address private s_currentChainPriceFeed;
+    address private s_cronAddress;
     mapping(address participant => uint256 balance) private s_participantBalance;
+    mapping(address participant => address token) private s_participantAsset;
+    mapping(address participant => uint256 approval) private s_deactivation;
     mapping(address token => address priceFeed) private s_priceFeeds;
     mapping(uint256 taskId => Task task) s_tasks;
     Status private s_status;
@@ -129,6 +136,8 @@ contract Accountable is Ownable, AccessControl {
     event AccountableContractCreated(address, uint256, uint256);
     event TaskCreated(uint256 indexed);
     event mintFeeTransferedToContract(uint256);
+    event EncodedCronJob(bytes);
+    event TaskAssigned(uint256, address[]);
 
     ///////////////////
     // Modifiers
@@ -156,41 +165,11 @@ contract Accountable is Ownable, AccessControl {
      * @param _title: A title for Agreement
      * @param _numberOfParticipatingParties: Total Number of participating parties/roommates in the contract
      * @param _participationStake: Amount need to be staked by each participant to join the agreement
-     * @param _tokenAddresses: list of supported token addresses on current chain
-     * @param _priceFeedAddresses: list of chainlink price feed contract addresses for supported ERC20 tokens
-     * @param _priceFeedAddressOfcurrentChain: chainlink price feed contract address of current chain
      */
-    constructor(
-        string memory _title,
-        uint256 _numberOfParticipatingParties,
-        uint256 _participationStake,
-        address[] memory _tokenAddresses,
-        address[] memory _priceFeedAddresses,
-        address _priceFeedAddressOfcurrentChain
-    ) {
+    constructor(string memory _title, uint256 _numberOfParticipatingParties, uint256 _participationStake) {
         if (_numberOfParticipatingParties <= 1) {
             revert Accountable__NumberOfParticipantsMustBeMoreThanOne();
         }
-
-        if (_tokenAddresses.length != _priceFeedAddresses.length) {
-            revert Accountable__CountOfTokenAddressesAndPriceFeedAddressesDontMatch();
-        }
-
-        if (_priceFeedAddressOfcurrentChain == address(0)) {
-            revert Accountable__PriceFeedAddressesCantBeZero();
-        }
-
-        // These feeds will be the USD pairs
-        // For example wETH / USD or wBTC / USD or MATIC / USD or USDC / USD etc.,
-        for (uint256 i = 0; i < _tokenAddresses.length; i++) {
-            if (_tokenAddresses[i] == address(0) || _priceFeedAddresses[i] == address(0)) {
-                revert Accountable__PriceFeedAddressesCantBeZero();
-            }
-
-            s_priceFeeds[_tokenAddresses[i]] = _priceFeedAddresses[i];
-        }
-
-        s_currentChainPriceFeed = _priceFeedAddressOfcurrentChain;
 
         s_title = _title;
         s_numberOfParticipatingParties = _numberOfParticipatingParties;
@@ -227,7 +206,9 @@ contract Accountable is Ownable, AccessControl {
             revert Accountable__AlreadyJoined();
         }
 
-        AggregatorV3Interface priceFeed = AggregatorV3Interface(s_currentChainPriceFeed);
+        address currentChainPriceFeed = AccountableFactory(owner()).getNativeChainPriceFeed();
+
+        AggregatorV3Interface priceFeed = AggregatorV3Interface(currentChainPriceFeed);
 
         // a check to see if correct amount of funds are sent to mint an NFT
         if (priceFeed.getUsdValue(msg.value) < s_participationStake) {
@@ -269,7 +250,9 @@ contract Accountable is Ownable, AccessControl {
             revert Accountable__AlreadyJoined();
         }
 
-        AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[_tokenAddress]);
+        address tokenPriceFeed = AccountableFactory(owner()).getTokenPriceFeed(_tokenAddress);
+
+        AggregatorV3Interface priceFeed = AggregatorV3Interface(tokenPriceFeed);
 
         // a check to see if correct amount of funds are sent to mint an NFT
         if (priceFeed.getUsdValue(_amount) < s_participationStake) {
@@ -281,6 +264,8 @@ contract Accountable is Ownable, AccessControl {
         _grantRole(PARTICIPANT_ROLE, msg.sender);
         s_participants.push(payable(msg.sender));
         s_participantBalance[msg.sender] = msg.value;
+
+        s_participantAsset[msg.sender] = _tokenAddress;
 
         // transfer ERC20 tokens from participant to contracts address
         _transferTokens(_tokenAddress, _amount);
@@ -301,6 +286,10 @@ contract Accountable is Ownable, AccessControl {
             revert Accountable__NotActive();
         }
 
+        if (s_participantAsset[msg.sender] != address(0)) {
+            revert Accountable__MultipleAssetsNotAllowed();
+        }
+
         if (msg.value > 0) {
             emit PaticipantIncreasedStake(msg.sender, msg.value);
             s_participantBalance[msg.sender] += msg.value;
@@ -319,6 +308,10 @@ contract Accountable is Ownable, AccessControl {
             revert Accountable__NotActive();
         }
 
+        if (s_participantAsset[msg.sender] != _tokenAddress) {
+            revert Accountable__MultipleAssetsNotAllowed();
+        }
+
         if (_amount > 0) {
             emit PaticipantIncreasedStake(msg.sender, _amount);
             _transferTokens(_tokenAddress, _amount);
@@ -326,16 +319,6 @@ contract Accountable is Ownable, AccessControl {
         } else {
             revert Accountable__NoEthSentToIncreaseStake();
         }
-    }
-
-    /**
-     * a function called by owner of contract to add support of other tokens
-     *
-     * @param _tokenAddress: address of token contract
-     * @param _tokenPriceFeedAddress: pricefeed address of token address being addded
-     */
-    function addTokenSupport(address _tokenAddress, address _tokenPriceFeedAddress) external onlyOwner {
-        s_priceFeeds[_tokenAddress] = _tokenPriceFeedAddress;
     }
 
     /**
@@ -402,10 +385,10 @@ contract Accountable is Ownable, AccessControl {
             revert Accountable__StatusIsNotDeactivate();
         }
 
-        // ******* check if personal already approved his deactivation ?*******
-        ///
-        ///
-        ///
+        // check if persona already approved deactivation
+        if (s_deactivation[msg.sender] != 0) {
+            revert Accountable__CanOnlyApproveDeactivationOnce();
+        }
 
         emit approvedDeactivation(msg.sender);
         s_deactivationApprovals += 1;
@@ -433,6 +416,76 @@ contract Accountable is Ownable, AccessControl {
     // public functions
     //////////////////////
 
+    //
+    //
+    // string memory _minuite,
+    // string memory _hour,
+    // string memory _dayOfMonth,
+    // string memory _month,
+    // string memory _dayOfWeek
+
+    function rewardOthers(address slasher, uint256 _amount) public {
+        for (uint256 i = 0; i < s_participants.length; i++) {
+            if (s_participants[i] != slasher) {
+                s_participantBalance[s_participants[i]] += _amount / s_participants.length;
+            }
+        }
+    }
+
+    function checkForSlashingAndAssignTask(uint256 _taskId) external returns (bool) {
+        // check the num of votes for previous week task instance
+        // if >50% votes received, then do nothing
+        // else slash a portion of instance assignees stake and distribute to others
+        Task memory task = s_tasks[_taskId];
+
+        uint256 slash = s_participationStake * 10 / 100;
+
+        if (task.accepted < 2) {
+            for (uint256 i = 0; i < task.assignedTo.length; i++) {
+                s_participantBalance[task.assignedTo[i]] -= slash;
+                rewardOthers(task.assignedTo[i], slash);
+            }
+        }
+
+        // rearrange and assign current task instance to next in line participants
+
+        for (uint256 i = 0; i < task.numberOfParticipants; i++) {
+            task.assignedTo[i] = s_participants[task.nextParticipantIndex];
+            task.nextParticipantIndex = (task.nextParticipantIndex + 1) % s_participants.length;
+        }
+
+        emit TaskAssigned(_taskId, task.assignedTo);
+        return true;
+    }
+
+    function createTask(
+        // string memory _taskName,
+        // uint256 _numOfPeople,
+        string calldata _cronString
+    ) external returns (bytes memory) {
+        (bool success, bytes memory returnData) = s_cronAddress.call(
+            abi.encodeWithSelector(
+                AccountableTaskAutomation(owner()).getEncodeSelector(),
+                address(this),
+                AccountableTaskAutomation(owner()).getHandler(),
+                _cronString
+            )
+        );
+
+        if (!success) {
+            revert Accountable__EncodeCronJobFailed();
+        }
+
+        emit EncodedCronJob(returnData);
+
+        return (bytes(returnData));
+        // make a public call from ui > metamask > newCronUpkeepWithJob(bytes) by passing bytes return data
+        // listen to events to get newly created upkeep contract address
+        // from ui do a transfer and call on link token contract by passing 2 link tokens atleast
+        //  to : keeper registrar contract 0x9a811502d843E5a03913d5A2cfb646c11463467A for sepolia
+        // and call data as bytes with
+    }
+
     /**
      * a function called by any of the particpants to add a task
      *
@@ -449,7 +502,7 @@ contract Accountable is Ownable, AccessControl {
             revert Accountable__NotActive();
         }
 
-        Task memory task = Task(_taskName, _numOfPeople, _repetitionPerWeek, 0, new address[](0));
+        Task memory task = Task(_taskName, _numOfPeople, _repetitionPerWeek, 0, 0, new address[](0));
 
         s_tasks[taskId._value] = task;
         taskId.increment();
@@ -595,39 +648,5 @@ contract Accountable is Ownable, AccessControl {
      */
     function getBalance(address account) external view returns (uint256) {
         return s_participantBalance[account];
-    }
-
-    /**
-     * a function call to return current chain price feed address
-     */
-    function getNativeChainPriceFeed() external view returns (address) {
-        return s_currentChainPriceFeed;
-    }
-
-    /**
-     * a function called to get price feed address of a token
-     *
-     * @param _token: token for which price feed address is needed
-     */
-    function getTokenPriceFeed(address _token) external view returns (address) {
-        return s_priceFeeds[_token];
-    }
-
-    /**
-     * a function called to get usd price in eth
-     */
-    function getEthPriceFromUsd() external view returns (uint256) {
-        AggregatorV3Interface priceFeed = AggregatorV3Interface(s_currentChainPriceFeed);
-        return priceFeed.getEthAmountFromUsd(s_participationStake);
-    }
-
-    /**
-     * a function to get price conversion from USD to token equivalent price
-     *
-     * @param _tokenAddress: conversion in which token equivalent is needed
-     */
-    function getTokenPriceFromUsd(address _tokenAddress) external view returns (uint256) {
-        AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[_tokenAddress]);
-        return priceFeed.getEthAmountFromUsd(s_participationStake);
     }
 }
